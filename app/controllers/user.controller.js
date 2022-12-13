@@ -1,191 +1,146 @@
 const db = require("../models");
-const bcrypt = require('bcrypt'); 
-var jwt = require("jsonwebtoken");
+const commonService = require('../service/common.servic')
+const message = require('../messagetype/message')
+const serviceFunction = require('../utils/service.provide')
+const CustomErrorHandler = require('../utils/errorhandler')
 const https = require('https')
-require('dotenv').config()
+const bcrypt = require('bcrypt'); 
 const User = db.user;
 const Op = db.Sequelize.Op;
 
 
 // Create a signup
-exports.createSignup = async(req, res) => {
+exports.createSignup = async(req, res ,next) => {
   try {
-  // Validate request
-  if (!req.body) {
-    return  res.status(400).send({ message: "Content can not be empty!"});
-  }
 
-const {firstName,lastName ,gender,password ,email} = req.body
-
-const findUser = await User.findOne({ where: { email: email }});
+const findUser = await commonService.findByQuery(User ,true,{ email: req.body.email } ,{} ,false ,false,false, ) 
 
 if(findUser){
-  return res.status(400).send({message: "Username Already Taken"})
+  return next(CustomErrorHandler.wrongCredentials(message.MessageType.USER_ALREADY)) 
 }
 
-const salt = await bcrypt.genSalt(10);
-const hashedPassword = await bcrypt.hash(password, salt);
-  
-  const createUser = {
-    firstName: firstName,
-    lastName: lastName,
-    gender: gender,
-    password: hashedPassword,
-    email: email ,
-    role:'user'
-  };
+const createUser = await serviceFunction.passwordHashGenerate(false ,req.body)
 
-
-  User.create(createUser)
-    .then(data => { return res.status(200).send(data);})
-    .catch(err => {return res.status(500).send({ message: err.message || "Some error occurred while creating the User."});});
+await commonService.insertByQuery(User ,createUser ,false)
+ .then(data => { return res.json({status:true ,response:data})})
+ .catch(err => {return next(CustomErrorHandler.serverError(err.message || message.MessageType.SERVER_ERROR))});
   
   } catch (error) {
-    return res.status(500).send({ message:`Server Error : ${error.toString()}`})
+    return next(CustomErrorHandler.serverError(`Server Error : ${error.toString()}`))
   }
 };
 
 // Create a Login
-exports.CreateLogin = async(req,res)=>{
+exports.CreateLogin = async(req,res ,next)=>{
   try {
-  const {email ,password} = req.body
-   const findUser = await User.findOne({ where: { email: email }});
+   const findUser = await  commonService.findByQuery(User ,true,{ email: req.body.email } ,{} ,false ,false,false, ) 
  
    if(findUser === null){
-    return  res.status(400).send({message: "User not found. Please check your credentials",});
+    return next(CustomErrorHandler.wrongCredentials(message.MessageType.USER_NOT_FOUND)) 
    }
  
-  const match = await bcrypt.compare(password, findUser.password);
+  const match = await bcrypt.compare(req.body.password, findUser.password)
+  
   if(!match){
-    return res.status(400).send({message:'Username or password is wrong'})
+    return next(CustomErrorHandler.errorpasswordCompare(message.MessageType.PASSWORD_COMP_ERROR))       
   }
-  const token = jwt.sign(
-    { key: findUser.id, role: findUser.role },
-    process.env.jsonSecretToken,
-    { expiresIn: "87660h" }
-  );
 
-  let details = {
-    firstname: findUser.firstname,
-    lastName: findUser.lastName,
-    email:findUser.email,
-    id: findUser.id,
-    token: token,
-    role: findUser.role,
-  };
+  const details = await serviceFunction.tokenGenerate(findUser)
+  
   req.session.user = details
   res.cookie("token", details);
-  return res.status(200).send({message: "Success", data: details,});
+
+  return res.json({status:true,details})  
 
   } catch (error) {
-    return res.status(500).send({message:`Server Error : ${error.toString()}`})
+    return  next(CustomErrorHandler.serverError(`Server Error : ${error.toString()}`))
   }
 
 }
 
 // Retrieve all User from the database.
-exports.findAllUser = async(req, res) => {
+exports.findAllUser = async(req, res ,next) => {
   try {
   
   const { page, size} = req.query;
   const { limit, offset } = getPagination(parseInt(page), parseInt(size));
 
- await User.findAndCountAll({where: { role: "user" }, limit, offset  })
+  await  commonService.findByQuery(User ,false ,{ role: "user" } ,{} ,limit ,offset)       
     .then(data => {
       const response = getPagingData(data, page, limit);
-      // console.log(response ,"hello");
-      return res.status(200).send(response);
+      return res.json({status:true,response}) 
     })
     .catch(err => {
-      return res.status(500).send({message:err.message || "Some error occurred while retrieving User." });});
+      return next(CustomErrorHandler.serverError(err.message || message.MessageType.SERVER_ERROR))})
   } catch (error) {
-   return res.status(500).send({message:`Server Error : ${error.toString()}`}) 
+   return next(CustomErrorHandler.serverError(`Server Error : ${error.toString()}`))
   }
 };
 
 // Find a single Uase with an id
-exports.findOneUser = async(req, res) => {
-  const id = req.params.id;
-
-await User.findByPk(id)
-    .then(data => {
-      res.send(data);
-    })
-    .catch(err => {
-      res.status(500).send({
-        message: "Error retrieving User with id=" + id
-      });
-    });
+exports.findOneUser = async(req, res ,next) => {
+  try {
+    const id = req.params.id;
+    await User.findByPk(id)
+    .then(data => { return res.json({status:true,data})})
+    .catch(err => { return next(CustomErrorHandler.serverError(`${SERVER_ERROR} id=` + id))});
+  } catch (error) {
+    return next(CustomErrorHandler.serverError(`Server Error : ${error.toString()}`))
+  }
 };
 
 // Update a User by the id in the request
-exports.updateUser = async(req, res) => {
+exports.updateUser = async(req, res ,next) => {
+  try {
+    
   const id = req.params.id;
-  const {firstName ,lastName ,gender} = req.body
     const updateData = {
-      firstName: firstName,
-      lastName: lastName,
-       gender: gender,
+      firstName: req.body.firstName,
+      lastName: req.body.lastName,
+       gender: req.body.gender,
       }
- await User.update(updateData, {
-    where: { id: id }
-  })
+ await commonService.updateByQuery(User ,true ,updateData,{id:id})
     .then(num => {
       if (num == 1) {
-        res.send({
-          message: "User updated successfully."
-        });
+        res.json({ status:true, message: "User updated successfully."});
       } else {
-        res.send({
-          message: `Cannot update User with id=${id}. Maybe User was not found or req.body is empty!`
-        });
+        return next(CustomErrorHandler.wrongCredentials(`Cannot update User with id=${id}. Maybe User was not found or req.body is empty!`))
       }
     })
     .catch(err => {
-      res.status(500).send({
-        message: "Error updating User with id=" + id
-      });
+      return next(CustomErrorHandler.serverError(`${SERVER_ERROR} id=` + id))
     });
+  } catch (error) {
+    return next(CustomErrorHandler.serverError(`Server Error : ${error.toString()}`))
+  }
 };
 
 // Delete a User with the specified id in the request
-exports.deleteUser = async(req, res) => {
+exports.deleteUser = async(req, res ,next) => {
   const id = req.params.id;
-console.log(id);
- await User.destroy({
-    where: { id: id }
-  })
+ await User.destroy({where: { id: id }})
     .then(num => {
       if (num == 1) {
-        res.send({
-          message: "User deleted successfully!"
-        });
+        res.Json({ status:true, message:message.MessageType.UPDATE_USER});
       } else {
-        res.send({
-          message: `Cannot delete User with id=${id}. Maybe User was not found!`
-        });
+        return next(CustomErrorHandler.wrongCredentials(`Cannot delete User with id=${id}. Maybe User was not found!`))
       }
     })
-    .catch(err => {
-      res.status(500).send({
-        message: "Could not delete User with id=" + id
-      });
-    });
+    .catch(err => {return next(CustomErrorHandler.serverError("Could not delete User with id=" + id))});
 };
 
 // LogoutUser
-exports.LogoutUser = async(req,res)=>{
+exports.LogoutUser = async(req,res ,next)=>{
   try {
     var sess = req.session;
-    // console.log(sess);
     if(sess.user !== undefined){
       req.session.user = null;
-      return res.status(200).send({success: true, message: "user logout successfully"});
+      return res.status(200).send({success: true, message:message.MessageType.USER_LOGOUT });
     }else{
-      return res.status(400).send({message:"User Not logout"})
+      return next(CustomErrorHandler.wrongCredentials("User Not logout"))
     }
   } catch (error) {
-   return res.status(500).send({message:`Server Error : ${error.toString()}`}) 
+   return next(CustomErrorHandler.serverError(`Server Error : ${error.toString()}`))
   }
 }
 
@@ -205,7 +160,6 @@ const getPagingData = (data, page, limit) => {
 
   return { totalItems, users, totalPages, currentPage };
 };
-
 
 exports.randomJoke = async(urlData)=>{
   const Url = urlData

@@ -1,10 +1,10 @@
 
 // add your database details
 module.exports = {
-  HOST:'localhost',
-  USER:'root',
-  PASSWORD:'123456',
-  DB:'testdb',
+  HOST:'sql842.main-hosting.eu',
+  USER:'u448977549_divya',
+  PASSWORD:'Ny5mwse+]5@',
+  DB:'u448977549_divya',
   dialect: "mysql",
   pool: {
     max: 5,
